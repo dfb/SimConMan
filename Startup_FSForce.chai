@@ -1,0 +1,143 @@
+use("Data/Scripts/Includes/SimFuncs.chai");
+
+// To reduce network overhead, we assign an ID to each variable we intend to send to the client,
+// so each variable or sim event name that will be used needs to be listed here
+global varNames = [
+    "Aircraft.Input.Pitch",
+    "Aircraft.Input.Roll",
+    "Aircraft.Position.Airspeed.Indicated",
+    "Aircraft.Position.Airspeed.True",
+    "Aircraft.Position.GroundSpeed.Value",
+    "Aircraft.Status.OnGround",
+    "Aircraft.Wheel.Center.Rotation.RPM",
+    "SimState.Paused"
+]
+global varToIDMap = Map() // name from varNames --> ID as a string
+
+global needReset = true;
+global inPort = 62000;
+global inAddr = createNetworkAddress("127.0.0.1", inPort);
+global outAddr = createNetworkAddress("127.0.0.1", 61000);
+global onDat;
+global udp = UDPSocket();
+global outMessage = "";
+global messages = [];
+
+def onUDPMessage(addr, msg)
+{
+    if (msg == "RES:1")
+    {
+        print("client wants reset");
+        needReset = true;
+    }
+}
+
+def SendMsg(msg)
+{
+    auto m = msg; // we get some error without this :(
+    udp.sendData(outAddr, m);
+}
+
+def onStart()
+{
+    // create the mapping from var name to ID
+    varToIDMap.clear();
+    for (varName : varNames.range())
+    {
+        varToIDMap[varName] = varToIDMap.size().to_string();
+    }
+
+	onDat := udp.onMessageReceived(onUDPMessage);
+    udp.listenOn(inPort);
+    udp.startListening();
+}
+
+global trackedValues = Map();
+// checks to see if the given variable has changed by more than the given amount and, if so,
+// records its new value and sends a network event indicating that it changed
+def checkForChanges(varName, epsilon)
+{
+    var varID = varToIDMap[varName];
+    if (varToIDMap.count(varName) == 0)
+    {
+        print("ERROR: " + varName + " is not a registered variable");
+        return;
+    }
+
+    var cur = getVarFloat(varName);
+    var changed = false;
+    if (trackedValues.count(varName) == 0)
+    {   // first use
+        changed = true;
+    }
+    else
+    {
+        var prev = trackedValues[varName];
+        var diff = (prev - cur); // TODO: is there an abs function available?
+        if (diff < 0)
+        {
+            diff = -1.0 * diff;
+        }
+
+        if (diff > epsilon)
+        {
+            changed = true;
+        }
+    }
+
+    if (changed)
+    {
+        trackedValues[varName] = cur;
+        SendMsg("V:" + varID + "=" + cur.to_string());
+    }
+}
+
+def onGraphicsFrame()
+{
+    if (needReset)
+    {   // respond to client's request for a reset
+        needReset = false;
+        SendMsg("RES:1");
+
+        // on reset, we send our variable mapping info
+        for (item : varToIDMap.range())
+        {
+            SendMsg("DEF:" + item.first() + "=" + item.second());
+        }
+
+        // trigger resend of everything
+        trackedValues.clear();
+    }
+
+    // pump incoming messages, send outgoing messages
+    udp.processNotifications();
+    checkForChanges("Aircraft.Status.OnGround", 0.25);
+    checkForChanges("Aircraft.Input.Pitch", 0.25);
+    checkForChanges("Aircraft.Input.Roll", 0.25);
+    checkForChanges("Aircraft.Position.Airspeed.Indicated", 0.5);
+    checkForChanges("Aircraft.Position.Airspeed.True", 0.5);
+    checkForChanges("Aircraft.Position.GroundSpeed.Value", 0.5);
+    checkForChanges("Aircraft.Wheel.Center.Rotation.RPM", 0.5);
+    checkForChanges("SimState.Paused", 0.5);
+}
+
+def onUIFrame()
+{
+	auto& ui = GetUI();
+    ui.startWindow("UDP messages");
+    ui.inputString("Text", outMessage);
+    ui.sameLine();
+    if(ui.button("Send"))
+    {
+        udp.sendData(outAddr, outMessage);
+        messages.push_back("You: " +outMessage);
+        outMessage = "";
+    }
+    
+    for (auto i = 0; i < messages.size(); ++i)
+    {
+        ui.text(messages[i]);
+    }
+    
+    ui.endWindow();
+}
