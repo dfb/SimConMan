@@ -16,3 +16,9 @@ The solution I chose was to write a "shim" layer that translates between the plu
 - configure the legacy plugin to talk to the bridge
 
 Although the main goal is to bridge the specific force feedback plugin with the FlyInside simulator, the SimConnect code in particular may be useful in other projects, and the overall approach could (in theory) be used for other legacy plugins.
+
+## Basic Usage
+This is still very much a work in progress but for now:
+- Put Startup_FSForce.chai in ```<path to>\FlyInside Flight Simulator\Data\Scripts```
+- Start the sim
+- Run ```python ffs_fsforce.py```
