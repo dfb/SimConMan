@@ -22,8 +22,8 @@ NEXT
 - add ConnHandler.activeDataRequests
 '''
 
-import sys, socket, time, traceback, threading, json
-from simconnect import connection, message
+import sys, socket, time, traceback, threading, json, struct
+from simconnect import connection, message, defs as SC
 import fsfloader
 
 class Bag(dict):
@@ -107,12 +107,16 @@ class FlyInsideConnector:
                                 # Sim is defining a short ID for a variable name
                                 varName, varID = payload.split('=')
                                 idToVarNames[varID] = varName
-                            elif cmd == 'V':
-                                # Sim is giving us an updated value for a variable
+                            elif cmd == 'VF':
+                                # Sim is giving us an updated value for a float variable
                                 varID, value = payload.split('=')
                                 varName = idToVarNames[varID]
                                 self.varToValues[varName] = float(value)
-                                # TODO: string vars and whatnot
+                            elif cmd == 'VS':
+                                # Sim is giving us an updated value for a string variable
+                                varID, value = payload.split('=')
+                                varName = idToVarNames[varID]
+                                self.varToValues[varName] = value
                             else:
                                 log('Unhandled message:', cmd, payload)
                 except socket.timeout:
@@ -141,9 +145,9 @@ class FlyInsideConnector:
         self.scConnections[conn.handlerID] = conn
         self.systemEventHandlers.setdefault(eventName, []).append((conn.handlerID, clientEventNum))
 
-    def UserInUI(self):
-        '''returns True if the user is doing stuff in the UI, False if they are flying the aircraft'''
-        return False # It looks like FFS is never "in UI" - it can be paused but doesn't have a separate "in ui" state
+    def IsPaused(self):
+        '''returns True if sim is paused'''
+        return not not self.varToValues.get('SimState.Paused')
 
     def Tick(self):
         '''to be someday called periodically'''
@@ -153,6 +157,7 @@ class FlyInsideConnector:
             try:
                 conn.Tick(self.varToValues)
             except:
+                logTB()
                 log('Failed to tick', handlerID, '- dropping the connection')
                 del self.scConnections[handlerID]
 
@@ -164,6 +169,7 @@ class FlyInsideConnector:
             try:
                 conn.OnSimEvent(eventName, **kwargs)
             except:
+                logTB()
                 log('Failed to deliver sim event', eventName, 'to', handlerID, '- dropping the connection')
                 del self.scConnections[handlerID]
 
@@ -182,6 +188,259 @@ class InputEventInfo:
         self.upID = None
         self.upValue = None
         self.maskable = False
+
+ZEROS = bytearray(b'\x00' * 512)
+def _VS(s, wide, maxLen):
+    '''Used by ValueToBytes: returns bytes for the given string. Encodes to utf-8 if
+    wide is False, else utf-16. Truncates to maxLen (in chars) and then padded to that
+    length if needed.'''
+    # TODO: verify maxLen for wide strings - is it bytes or chars for sure?
+    # (for now I'm treating it like bytes)
+    if wide:
+        assert 0, 'Hrm, need to verify that utf-16 is right here, and whether or not the BOM should be included'
+        s = s.encode('utf-16')
+    else:
+        s = s.encode('utf-8')
+    ret = bytearray(s[:maxLen])
+    padNeeded = maxLen - len(ret)
+    if padNeeded > 0:
+        ret.extend(ZEROS[:padNeeded])
+    return ret
+
+def ValueToBytes(v, dataType):
+    '''Converts the given value into bytes based on the given SC.DATATYPE'''
+    if dataType == SC.DATATYPE.INT32: return struct.pack('<i', dataType)
+    if dataType == SC.DATATYPE.INT64: return struct.pack('<q', dataType)
+    if dataType == SC.DATATYPE.FLOAT32: return struct.pack('<f', dataType)
+    if dataType == SC.DATATYPE.FLOAT64: return struct.pack('<d', dataType)
+    if dataType == SC.DATATYPE.STRING8: return _VS(v, False, 8)
+    if dataType == SC.DATATYPE.STRING32: return _VS(v, False, 32)
+    if dataType == SC.DATATYPE.STRING64: return _VS(v, False, 64)
+    if dataType == SC.DATATYPE.STRING128: return _VS(v, False, 128)
+    if dataType == SC.DATATYPE.STRING256: return _VS(v, False, 256)
+    if dataType == SC.DATATYPE.STRING260: return _VS(v, False, 260)
+    raise NotImplementedError('No support yet for data type %r' % dataType)
+
+    # TODO: add support for the following
+    # DATATYPE_STRINGV,        # variable-length narrow string
+    # DATATYPE_INITPOSITION,   # see SIMCONNECT_DATA_INITPOSITION
+    # DATATYPE_MARKERSTATE,    # see SIMCONNECT_DATA_MARKERSTATE
+    # DATATYPE_WAYPOINT,       # see SIMCONNECT_DATA_WAYPOINT
+    # DATATYPE_LATLONALT,      # see SIMCONNECT_DATA_LATLONALT
+    # DATATYPE_XYZ,            # see SIMCONNECT_DATA_XYZ
+    # DATATYPE_PBH,            # see SIMCONNECT_DATA_PBH
+    # DATATYPE_OBSERVER,       # see SIMCONNECT_DATA_OBSERVER
+    # DATATYPE_OBJECT_DAMAGED_BY_WEAPON,   # see SIMCONNECT_DATA_OBJECT_DAMAGED_BY_WEAPON
+    # DATATYPE_VIDEO_STREAM_INFO,
+    # DATATYPE_WSTRING8,       # 8 character wide string
+    # DATATYPE_WSTRING32,      # 32 character wide string
+    # DATATYPE_WSTRING64,      # 64 character wide string
+    # DATATYPE_WSTRING128,     # 128 character wide string
+    # DATATYPE_WSTRING256,     # 256 character wide string
+    # DATATYPE_WSTRING260,     # 260 character wide string
+    # DATATYPE_WSTRINGV) =range(28) # variable-length wide string
+
+# Value converter functions map FFS sim values to FSX values
+def CVDummy(v, unitsName): return v
+def CVBool(v, unitsName): return not not v
+def CVMPSToKnots(v, unitsName):
+    '''meters/second --> knots'''
+    assert unitsName.lower() == 'knots', unitsName
+    return v * 1.94384
+
+def CVConst(ret=0):
+    '''generates a CV func that always returns ret'''
+    def hardcoded(v, unitsName):
+        return ret
+    return hardcoded
+
+# FSX var name (in lower case) --> (FFS var name, value converter func)
+# Value converter funcs are like: func(value, unitsName)
+FSX_FFS_MAP = {
+    'title': ('Aircraft.Properties.Name', CVDummy),
+    'sim on ground': ('Aircraft.Status.OnGround', CVBool),
+    '':'Aircraft.Input.Pitch',
+    '':'Aircraft.Input.Roll',
+    'airspeed indicated':('Aircraft.Position.Airspeed.Indicated', CVMPSToKnots),
+    'airspeed true':('Aircraft.Position.Airspeed.True', CVMPSToKnots),
+    'ground velocity':('Aircraft.Position.GroundSpeed.Value', CVMPSToKnots),
+    'center wheel rpm':('Aircraft.Wheel.Center.Rotation.RPM', CVDummy),
+    '':'SimState.Paused',
+
+    # These are all TODO entries where for now we are just returning dummy values
+    'aileron left deflection pct' : (None, CVConst(0)), # 0-1
+    'aircraft wind y' : (None, CVConst(0)), # wind component in local vertical axis, knots
+    'autopilot altitude lock' : (None, CVConst(False)),
+    'autopilot approach hold' : (None, CVConst(False)),
+    'autopilot attitude hold' : (None, CVConst(False)),
+    'autopilot backcourse hold' : (None, CVConst(False)),
+    'autopilot glideslope hold' : (None, CVConst(False)),
+    'autopilot heading lock' : (None, CVConst(False)),
+    'autopilot master' : (None, CVConst(False)),
+    'autopilot nav1 lock' : (None, CVConst(False)),
+    'autopilot vertical hold' : (None, CVConst(False)),
+    'cable caught by tailhook' : (None, CVConst(0)),
+    'design speed vc' : (None, CVConst(0)), # design speed at VC, feet/sec
+    'design speed vs0' : (None, CVConst(0)), # design speed at VS0, feet/sec
+    'elevator position' : (None, CVConst)), # percent elevator input deflection - -16k to 0, with -16k=full down. is this input pos or actual elevator pos?
+    'elevator trim position' : (None, CVConst()), # elevator trim deflection, radians
+    'engine type' : (None, CVConst()), # engine type: 0=piston, 1=jet, 2=none, 5=turboprop
+    'gear center position' : (None, CVConst()), # % center gear extended, 0..1
+    'gear handle position' : (None, CVConst()), # true if gear handle applied, bool
+    'gear left position' : (None, CVConst()), # % left gear extended, 0..1
+    'gear right position' : (None, CVConst()), # % right gear extended, 0..1
+    'general eng pct max rpm:1' : (None, CVConst()), # % of max rated RPM
+    'general eng throttle lever position:1' : (None, CVConst()), # % of max throttle position, perc
+    'incidence alpha' : (None, CVConst()), # angle of attack, radians
+    'is gear retractable' : (None, CVConst()), # bool
+    'is slew active' : (None, CVConst()), # slew active?, bool (vs flight model)
+    'is tail dragger' : (None, CVConst()), # bool
+    'pitot ice pct' : (None, CVConst()), # amount of pitot ice, 100=fully iced, 0..1
+    'plane alt above ground' : (None, CVConst()), # AGL, feet
+    'plane altitude' : (None, CVConst()),# alt, feet
+    'plane bank degrees' : (None, CVConst()), # bank angle IN RADIANS
+    'plane latitude' : (None, CVConst()), # N latitude, radians
+    'plane longitude' : (None, CVConst()), # E longitude, radians
+    'rotation velocity body x' : (None, CVConst()), # rotation relative to aircraft axis, feet/sec
+    'rotation velocity body y' : (None, CVConst()), # rotation relative to aircraft axis, feet/sec
+    'stall alpha' : (None, CVConst()), # stall alpha, radians
+    'stall warning' : (None, CVConst()), # true if stall warning is on, bool
+    'surface type' : (None, CVConst(1)), # 1 = grass
+    'turb eng afterburner:1' : (None, CVConst()), # afterburner state, bool
+    'turb eng n1:1' : (None, CVConst()), # turbine engine N1, perc
+    'velocity world y' : (None, CVConst()), # speed relative to earth, in vertical dir, feet/sec
+    'visual model radius' : (None, CVConst()), # model radius, meters
+}
+
+def GetSimVarNameAndConverter(fsxName):
+    '''Given a simvar name from FSX, return the equivalent FlyInside simvar name and a converter function for its values'''
+    # see https://docs.microsoft.com/en-us/previous-versions/microsoft-esp/cc526981%28v%3dmsdn.10%29 for fsx var names
+    entry = FSX_FFS_MAP.get(fsxName.lower())
+    if entry is None:
+        log('WARNING: no simvar mapping for', fsxName)
+        return '[%s]' % fsxName, CVDummy
+    ffsName, converted = entry
+    # to aid in development, a name of None means we just wrap the FSX name in brackets (so we know it's been dummied up)
+    if ffsName is None:
+        ffsName = '[%s]' % fsxName
+    return ffsName, converted
+
+class DataDefinitionEntry:
+    '''one item of info a in a data definition'''
+    def __init__(self, msg):
+        self.fsxName = msg.datumName
+        self.ffsName, self.FFSValueToFSX = GetSimVarNameAndConverter(self.fsxName)
+        self.units = msg.unitsName
+        self.type = msg.dataType
+        self.epsilon = msg.epsilon
+        self.datumID = msg.datumID
+        self.prevValue = None # for detecting when data has changed
+
+    def ExtractValue(self, varValues):
+        '''Extracts the current value from the given set of values, returning None if the value is not
+        found. Converts the value (based on self.units) if needed before returning it.'''
+        cur = varValues.get(self.ffsName)
+        return self.FFSValueToFSX(cur, self.units)
+
+    def HasChanged(self, extractedValue):
+        '''Using a value from ExtractValue, returns True if the value has changed (taking into account
+        self.epsilon if it makes sense'''
+        if extractedValue is None:
+            return False # I guess?
+        if self.prevValue is None:
+            return True
+        # See if the value is different enough to count as a change
+        if type(extractedValue) is int:
+            changed = abs(extractedValue - self.prevValue) > int(self.epsilon) # doc says we truncate epsilon in this case
+        elif type(extractedValue) is float:
+            changed = abs(extractedValue - self.prevValue) > self.epsilon
+        else:
+            changed = extractedValue != self.prevValue
+        return changed
+
+    def GenValue(self, taggedFormat, force, varValues):
+        '''Returns a binary blob for a SSimObjectData message. If taggedFormat is True, returns the value
+        in tagged format (i.e. prefixed with the datumID). Updates self.prevValue before returning.'''
+        cur = self.ExtractValue(varValues)
+        if not force and not self.HasChanged(cur):
+            return None
+
+        self.prevValue = cur
+        ret = bytearray()
+        if taggedFormat:
+            # Tagged format is datumID (as a 4B value) + data
+            ret.extend(struct.pack('<L', self.datumID))
+        ret.extend(ValueToBytes(cur, self.type))
+        return ret
+
+class ObjectDataRequest:
+    def __init__(self, msg):
+        # warn on not implemented stuff that is probably ok
+        if msg.origin != 0: log('WARNING: ignoring origin in', msg)
+        if msg.limit != 0: log('WARNING: ignoring limit in', msg)
+        if msg.interval != 0: log('WARNING: ignoring interval in', msg)
+        self.requestID = msg.requestID
+        self.objectID = msg.objectID
+        self.definitionID = msg.definitionID
+        self.period = msg.period
+        self.flags = msg.flags
+        self.taggedFormat = not not (msg.flags & SC.DATA_REQUEST_FLAG.TAGGED) # return values in tagged format?
+        self.onlyWhenChanged = not not (msg.flags & SC.DATA_REQUEST_FLAG.CHANGED) # send always or only if it changed?
+        self.lastSent = None # timestamp of when we last fulfilled the request
+
+    def Due(self):
+        '''Returns True if it's time to send data for this request again'''
+        if self.period == SC.PERIOD.NEVER:
+            return False # does this ever happen?
+        if self.lastSent is None:
+            return True
+        if self.period == SC.PERIOD.SECOND:
+            return time.time() - self.lastSent >= 1.0
+        return True
+
+    def GenMessage(self, varValues, dataDefEntries):
+        '''Creates a message to send to the client with the requested data. Returns (msg, finished), where
+        finished is True if this data request is done and can be erased from the list of active data requests.
+        varValues is a mapping of the most recent sim variable values and dataDefEntries is a list of DataDefinitionEntry
+        objects. Returns None if '''
+        self.lastSent = time.time()
+        finished = (self.period in (SC.PERIOD.NEVER, SC.PERIOD.ONCE)) # TODO: add support for limit
+        entries = []
+
+        # There is some complexity around what we return. We've already checked self.Due() by now, so rules around
+        # when to apply stuff have already been applied for the most part, but if self.onlyWhenChanged is set, then
+        # we send only the values that have changed. Except that if the data isn't being sent back in tagged format, then
+        # if self.onlyWhenChanged is set and at least one entry has changed, then we send them all back.
+        if self.onlyWhenChanged and not self.taggedFormat:
+            # The special case: we're not using tagged format, so it's all or nothing, so we send them all back if
+            # at least one entry changed, otherwise we send back nothing. So first check to see if any changed.
+            anyChanged = False
+            for dde in dataDefEntries:
+                cur = dde.ExtractValue(varValues)
+                if dde.HasChanged(cur):
+                    anyChanged = True
+                    break
+
+            # If any changed, make them all generate new values
+            if anyChanged:
+                for dde in dataDefEntries:
+                    entry = dde.GenValue(False, True, varValues)
+                    if entry is not None:
+                        entries.append(entry)
+        else:
+            for dde in dataDefEntries:
+                entry = dde.GenValue(self.taggedFormat, not self.onlyWhenChanged, varValues)
+                if entry is not None:
+                    entries.append(entry)
+
+        if not entries:
+            return None, finished
+
+        msg = message.SSimObjectData(requestID=self.requestID, objectID=self.objectID, definitionID=self.definitionID,
+                                     entryNumber=1, outOf=1, flags=self.flags)
+        msg.data = b''.join(entries)
+        msg.defineCount = len(msg.data) // 8 # docs say "number of 8-byte elements in the dwData array"
+        return msg, finished
 
 class ConnectionHandler:
     nextID = 0
@@ -203,6 +462,7 @@ class ConnectionHandler:
         self.simEventMap = {} # sim event name --> client event ID
         self.notificationGroups = {} # client notification group ID -> PriorityGroup instance
         self.inputGroups = {} # client mapped input event group -> PrioritGroup instance
+        self.activeDataRequests = [] # pending (and possibly repeating) requests from the sim for data
 
     def Handle(self):
         try:
@@ -232,13 +492,31 @@ class ConnectionHandler:
         '''used by other methods to send a message to the client, setting the _protocol
         member of the message first'''
         msg._protocol = self.protocol
+        log('SENDING TO SIM:', msg)
         self.client.Send(msg)
 
     def Tick(self, varValues):
         '''called periodically to see if we need to send any new messages to the client. varValues is a dict
         of simVarName -> most recent value'''
-        # TODO: check for subscribed data changes and send them
-        log(varValues)
+        toDelete = []
+        for dr in self.activeDataRequests:
+            if not dr.Due():
+                continue
+
+            dataDefEntries = self.dataDefs.get(dr.definitionID)
+            if not dataDefEntries:
+                log('ERROR: no data def entries for dataDefinitionID', dr.id)
+                continue
+
+            msg, finished = dr.GenMessage(varValues, dataDefEntries)
+            if finished:
+                toDelete.append(dr)
+            if msg is not None:
+                self.Send(msg)
+
+        # Remove any data requests that are now completely fulfilled
+        for dr in toDelete:
+            self.activeDataRequests.remove(dr)
 
     def OnCOpen(self, msg):
         resp = message.SOpen()
@@ -269,16 +547,14 @@ class ConnectionHandler:
     def OnCRequestSystemState(self, msg):
         resp = message.SSystemState(requestID=msg.requestID, dataInteger=0, dataFloat=0.0, dataString='')
         if msg.stateName == 'Sim':
-            resp.dataInteger = 0 if self.fic.UserInUI() else 1
+            resp.dataInteger = 0 if self.fic.IsPaused() else 1
             self.Send(resp)
         else:
             # TODO: handle other cases
             log('ERROR: unhandled system state request', msg)
 
     def OnCAddToDataDefinition(self, msg):
-        d = Bag(name=msg.datumName, units=msg.unitsName, type=msg.dataType, epsilon=msg.epsilon, id=msg.datumID)
-        log('data def:', msg.dataDefinitionID, d)
-        self.dataDefs.setdefault(msg.dataDefinitionID, []).append(d)
+        self.dataDefs.setdefault(msg.dataDefinitionID, []).append(DataDefinitionEntry(msg))
 
     def OnCMapClientEventToSimEvent(self, msg):
         # TODO: make sure we handle all desired sim events
@@ -329,10 +605,10 @@ class ConnectionHandler:
         # TODO: make sure we follow the priority rules
 
     def OnCRequestDataOnSimObject(self, msg):
-        log(msg)
-        # ReqDataOnSimObject <CRequestDataOnSimObject: requestID: 1, definitionID: 1, objectID: 0, period: 3, flags: 1, origin: 0, interval: 0, limit: 0>
-        # ReqDataOnSimObject <CRequestDataOnSimObject: requestID: 2, definitionID: 2, objectID: 0, period: 3, flags: 1, origin: 0, interval: 0, limit: 0>
-        # TODO: implement
+        if msg.objectID != SC.OBJECT_ID_USER:
+            log('WARNING: not handling', msg)
+            return
+        self.activeDataRequests.append(ObjectDataRequest(msg))
 
     def OnCTransmitClientEvent(self, msg):
         pass
