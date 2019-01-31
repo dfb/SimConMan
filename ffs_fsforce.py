@@ -254,7 +254,7 @@ def CVConst(ret=0):
         return ret
     return hardcoded
 
-# FSX var name (in lower case) --> (FFS var name, value converter func)
+# FSX var name (in lower case) --> (FFS var name, FFS units name, default value if missing)
 # Value converter funcs are like: func(value, unitsName)
 FSX_FFS_MAP = {
     'title': ('Aircraft.Properties.Name', CVDummy),
@@ -268,8 +268,40 @@ FSX_FFS_MAP = {
     '':'SimState.Paused',
 
     # These are all TODO entries where for now we are just returning dummy values
-    'aileron left deflection pct' : (None, CVConst(0)), # 0-1
+    'aileron left deflection pct' : (None, CVConst(0)), # 0-1 (-100 = full left roll)
     'aircraft wind y' : (None, CVConst(0)), # wind component in local vertical axis, knots
+    'elevator position' : (None, CVConst)), # percent elevator input deflection - as a raw value, -1 (pushed in) to 1 (pulled out), or -100..100 as a percent
+    'elevator trim position' : (None, CVConst()), # elevator trim deflection, radians
+    'gear center position' : (None, CVConst()), # % center gear extended, 0..1
+    'gear handle position' : (None, CVConst()), # 1.0 if gear handle in "extended" pos, 0 if in retracted pos
+    'gear left position' : (None, CVConst()), # % left gear extended, 0..1 (0=retracted)
+    'gear right position' : (None, CVConst()), # % right gear extended, 0..1
+    'general eng pct max rpm:1' : (None, CVConst()), # % of max rated RPM
+    'general eng throttle lever position:1' : (None, CVConst()), # % of max throttle position, perc
+    'incidence alpha' : (None, CVConst()), # angle of attack, radians, remember that this doesn't change much since it's relative to the velocity vector
+    'pitot ice pct' : (None, CVConst()), # amount of pitot ice, 100=fully iced, 0..1
+    'plane alt above ground' : (None, CVConst()), # AGL, feet
+    'plane altitude' : (None, CVConst()),# alt, feet
+    'plane bank degrees' : (None, CVConst()), # bank angle IN RADIANS by default. degrees banked to the left (negative = bank to the right)
+    'plane latitude' : (None, CVConst()), # N latitude, radians
+    'plane longitude' : (None, CVConst()), # E longitude, radians
+    'rotation velocity body x' : (None, CVConst()), # rot rate on X (pitch) axis (+=down, -=up), angular units/sec
+    'rotation velocity body y' : (None, CVConst()), # rot rate on Y (yaw) axis (+=CW, -=CCW), angular units/sec
+    'rotation velocity body z' : (None, CVConst()), # rot rate on Z (roll) axis (+=left, -=right), angular units/sec
+    'stall warning' : (None, CVConst()), # true if stall warning is on, bool
+    'surface type' : (None, CVConst(1)), # 1 = grass, 4=asphalt, 0=concrete, 3=grass bumpy, 5=short grass
+    'velocity world y' : (None, CVConst()), # vertical speed, defaults to feet/sec
+
+    # info about the aircraft
+    'design speed vc' : (None, CVConst(0)), # design speed at VC (cruising speed), feet/sec
+    'design speed vs0' : (None, CVConst(0)), # design speed at VS0 (stall speed in landing config), feet/sec
+    'engine type' : (None, CVConst()), # engine type: 0=piston, 1=jet, 2=none, 5=turboprop
+    'is gear retractable' : (None, CVConst()), # bool
+    'is tail dragger' : (None, CVConst()), # bool
+    'stall alpha' : (None, CVConst()), # stall alpha, radians
+    'visual model radius' : (None, CVConst(16.4)), # model radius, meters
+
+    # once we get more important stuff working
     'autopilot altitude lock' : (None, CVConst(False)),
     'autopilot approach hold' : (None, CVConst(False)),
     'autopilot attitude hold' : (None, CVConst(False)),
@@ -279,37 +311,12 @@ FSX_FFS_MAP = {
     'autopilot master' : (None, CVConst(False)),
     'autopilot nav1 lock' : (None, CVConst(False)),
     'autopilot vertical hold' : (None, CVConst(False)),
+
+    # someday, maybe, probably not
     'cable caught by tailhook' : (None, CVConst(0)),
-    'design speed vc' : (None, CVConst(0)), # design speed at VC, feet/sec
-    'design speed vs0' : (None, CVConst(0)), # design speed at VS0, feet/sec
-    'elevator position' : (None, CVConst)), # percent elevator input deflection - -16k to 0, with -16k=full down. is this input pos or actual elevator pos?
-    'elevator trim position' : (None, CVConst()), # elevator trim deflection, radians
-    'engine type' : (None, CVConst()), # engine type: 0=piston, 1=jet, 2=none, 5=turboprop
-    'gear center position' : (None, CVConst()), # % center gear extended, 0..1
-    'gear handle position' : (None, CVConst()), # true if gear handle applied, bool
-    'gear left position' : (None, CVConst()), # % left gear extended, 0..1
-    'gear right position' : (None, CVConst()), # % right gear extended, 0..1
-    'general eng pct max rpm:1' : (None, CVConst()), # % of max rated RPM
-    'general eng throttle lever position:1' : (None, CVConst()), # % of max throttle position, perc
-    'incidence alpha' : (None, CVConst()), # angle of attack, radians
-    'is gear retractable' : (None, CVConst()), # bool
     'is slew active' : (None, CVConst()), # slew active?, bool (vs flight model)
-    'is tail dragger' : (None, CVConst()), # bool
-    'pitot ice pct' : (None, CVConst()), # amount of pitot ice, 100=fully iced, 0..1
-    'plane alt above ground' : (None, CVConst()), # AGL, feet
-    'plane altitude' : (None, CVConst()),# alt, feet
-    'plane bank degrees' : (None, CVConst()), # bank angle IN RADIANS
-    'plane latitude' : (None, CVConst()), # N latitude, radians
-    'plane longitude' : (None, CVConst()), # E longitude, radians
-    'rotation velocity body x' : (None, CVConst()), # rotation relative to aircraft axis, feet/sec
-    'rotation velocity body y' : (None, CVConst()), # rotation relative to aircraft axis, feet/sec
-    'stall alpha' : (None, CVConst()), # stall alpha, radians
-    'stall warning' : (None, CVConst()), # true if stall warning is on, bool
-    'surface type' : (None, CVConst(1)), # 1 = grass
     'turb eng afterburner:1' : (None, CVConst()), # afterburner state, bool
     'turb eng n1:1' : (None, CVConst()), # turbine engine N1, perc
-    'velocity world y' : (None, CVConst()), # speed relative to earth, in vertical dir, feet/sec
-    'visual model radius' : (None, CVConst()), # model radius, meters
 }
 
 def GetSimVarNameAndConverter(fsxName):

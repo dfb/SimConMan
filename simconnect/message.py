@@ -252,7 +252,7 @@ ServerMessage(0x01, 'SException', exception='L', sendID='L', index='L')
 ServerMessage(0x02, 'SOpen', appName='256s', appVer=Array('L', 2), appBuild=Array('L', 2),
                              scVer=Array('L', 2), scBuild=Array('L', 2), _ignore='L', _ignore2='L')
 ServerMessage(0x03, 'SQuit')
-ServerMessage(0x04, 'SEvent', groupID='L', eventID='L', data='L', flags='L')
+ServerMessage(0x04, 'SEvent', groupID='L', eventID='L', data='i', flags='L')
 ServerMessage(0x08, 'SSimObjectData', requestID='L', objectID='L', definitionID='L', flags='L',
               entryNumber='L', outOf='L', defineCount='L', data=Remaining())
 ServerMessage(0x09, 'SSimObjectDataByType', requestID='L', objectID='L', definitionID='L', flags='L',
