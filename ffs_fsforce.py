@@ -240,103 +240,88 @@ def ValueToBytes(v, dataType):
     # DATATYPE_WSTRING260,     # 260 character wide string
     # DATATYPE_WSTRINGV) =range(28) # variable-length wide string
 
-# Value converter functions map FFS sim values to FSX values
-def CVDummy(v, unitsName): return v
-def CVBool(v, unitsName): return not not v
-def CVMPSToKnots(v, unitsName):
-    '''meters/second --> knots'''
-    assert unitsName.lower() == 'knots', unitsName
-    return v * 1.94384
-
-def CVConst(ret=0):
-    '''generates a CV func that always returns ret'''
-    def hardcoded(v, unitsName):
-        return ret
-    return hardcoded
-
-# FSX var name (in lower case) --> (FFS var name, FFS units name, default value if missing)
-# Value converter funcs are like: func(value, unitsName)
+# Mapping from FSX variables to FFS variables. Each entry is
+# fsx var name -> (ffs var name, ffs unit or None if no conversion is needed, default if missing)
 FSX_FFS_MAP = {
-    'title': ('Aircraft.Properties.Name', CVDummy),
-    'sim on ground': ('Aircraft.Status.OnGround', CVBool),
-    '':'Aircraft.Input.Pitch',
-    '':'Aircraft.Input.Roll',
-    'airspeed indicated':('Aircraft.Position.Airspeed.Indicated', CVMPSToKnots),
-    'airspeed true':('Aircraft.Position.Airspeed.True', CVMPSToKnots),
-    'ground velocity':('Aircraft.Position.GroundSpeed.Value', CVMPSToKnots),
-    'center wheel rpm':('Aircraft.Wheel.Center.Rotation.RPM', CVDummy),
-    '':'SimState.Paused',
+    # Entries that have received at least cursory validation, or are ones we're stubbing out for now
+    'title': ('Aircraft.Properties.Name', None, 'MyPlane'),
+    'category': (None, None, 'Airplane'),
+    'is slew active' : (None, None, False), # is slew active (vs flight model active)
+    'airspeed true':('Aircraft.Position.Airspeed.True', 'meters per second', 0),
+    'airspeed indicated':('Aircraft.Position.Airspeed.Indicated', 'meters per second', 0),
+    'ground velocity':('Aircraft.Position.GroundSpeed.Value', 'meters per second', 0),
+    'autopilot altitude lock' : (None, 'bool', False),
+    'autopilot approach hold' : (None, 'bool', False),
+    'autopilot attitude hold' : (None, 'bool', False),
+    'autopilot backcourse hold' : (None, 'bool', False),
+    'autopilot glideslope hold' : (None, 'bool', False),
+    'autopilot heading lock' : (None, 'bool', False),
+    'autopilot master' : (None, 'bool', False),
+    'autopilot nav1 lock' : (None, 'bool', False),
+    'autopilot vertical hold' : (None, 'bool', False),
+    'sim on ground': ('Aircraft.Status.OnGround', 'bool', True),
+    'stall alpha' : ('Aircraft.Properties.Dynamics.StallAlpha', 'radians', 0.26), # stall alpha, radians
+    'pitot ice pct' : ('Aircraft.Status.PitotIce.Percent', '0..1', 0),
+    'plane latitude' : ('Aircraft.Position.Latitude', 'degrees', 0), # N latitude, radians
+    'plane longitude' : ('Aircraft.Position.Longitude', 'degrees', 0), # E longitude, radians
+    'cable caught by tailhook' : (None, 'bool', False),
+    'plane alt above ground' : ('Aircraft.Position.Altitude.Radar', 'meters', 0),
+    'plane altitude' : ('Aircraft.Position.Altitude.True', 'meters', 0), # I'm not 100% sure this FSX var is true alt, but there are separate vars for AGL and indicated
+    'center wheel rpm':('Aircraft.Wheel.Center.Rotation.RPM', 'rpm', 0),
+    'velocity world y' : ('Aircraft.Position.VerticalSpeed.Value', 'meters per second', 0), # vertical speed, defaults to feet/sec
+    'gear handle position' : ('Aircraft.Input.GearLever.Down', 'percent', True), # 1.0 if gear handle in "extended" pos, 0 if in retracted pos
+    'general eng pct max rpm:1' : ('Aircraft.Engine.1.Piston.RPMPercent', 'percent', 50), # % of max rated RPM
+    'general eng throttle lever position:1' : ('Aircraft.Controls.Engine.Throttle', 'percent', 50), # % of max throttle position, perc
+    'turb eng afterburner:1' : (None, None, False), # afterburner state, bool
+    'turb eng n1:1' : (None, None, 0), # turbine engine N1, perc
+    'plane bank degrees' : ('Aircraft.Position.Bank.Value', 'radians', 0), # bank angle IN RADIANS by default. degrees banked to the left (negative = bank to the right)
+    'elevator position' : ('Aircraft.Input.Pitch', 'percent', 0), # percent elevator input deflection - as a raw value, -1 (pushed in) to 1 (pulled out), or -100..100 as a percent - seems to be elevator *input* and not actual elevator angle
+    'aileron left deflection pct' : ('Aircraft.Surfaces.Aileron.Left.Percent', 'percent', 0), # 0-1 (-100 = full left roll)
+    'elevator trim position' : ('Aircraft.Surfaces.Elevator.Trim.Angle', 'radians', 0), # elevator trim deflection, radians
+    'rotation velocity body x' : ('Aircraft.Velocity.Rotation.Local.X', 'radians per second', 0), # rot rate on X (pitch) axis (+=down, -=up), angular units/sec
+    'rotation velocity body y' : ('Aircraft.Velocity.Rotation.Local.Y', 'radians per second', 0), # rot rate on Y (yaw) axis (+=CW, -=CCW), angular units/sec
+    'rotation velocity body z' : ('Aircraft.Velocity.Rotation.Local.Z', 'radians per second', 0), # rot rate on Z (roll) axis (+=left, -=right), angular units/sec
+    'aircraft wind y' : ('World.Wind.Velocity.Local.Y', 'meters per second', 5), # wind component in local vertical axis, knots
+    'incidence alpha' : ('Aircraft.Dynamics.Alpha', 'radians', 0.1), # angle of attack, radians, remember that this doesn't change much since it's relative to the velocity vector
 
-    # These are all TODO entries where for now we are just returning dummy values
-    'aileron left deflection pct' : (None, CVConst(0)), # 0-1 (-100 = full left roll)
-    'aircraft wind y' : (None, CVConst(0)), # wind component in local vertical axis, knots
-    'elevator position' : (None, CVConst)), # percent elevator input deflection - as a raw value, -1 (pushed in) to 1 (pulled out), or -100..100 as a percent
-    'elevator trim position' : (None, CVConst()), # elevator trim deflection, radians
-    'gear center position' : (None, CVConst()), # % center gear extended, 0..1
-    'gear handle position' : (None, CVConst()), # 1.0 if gear handle in "extended" pos, 0 if in retracted pos
-    'gear left position' : (None, CVConst()), # % left gear extended, 0..1 (0=retracted)
-    'gear right position' : (None, CVConst()), # % right gear extended, 0..1
-    'general eng pct max rpm:1' : (None, CVConst()), # % of max rated RPM
-    'general eng throttle lever position:1' : (None, CVConst()), # % of max throttle position, perc
-    'incidence alpha' : (None, CVConst()), # angle of attack, radians, remember that this doesn't change much since it's relative to the velocity vector
-    'pitot ice pct' : (None, CVConst()), # amount of pitot ice, 100=fully iced, 0..1
-    'plane alt above ground' : (None, CVConst()), # AGL, feet
-    'plane altitude' : (None, CVConst()),# alt, feet
-    'plane bank degrees' : (None, CVConst()), # bank angle IN RADIANS by default. degrees banked to the left (negative = bank to the right)
-    'plane latitude' : (None, CVConst()), # N latitude, radians
-    'plane longitude' : (None, CVConst()), # E longitude, radians
-    'rotation velocity body x' : (None, CVConst()), # rot rate on X (pitch) axis (+=down, -=up), angular units/sec
-    'rotation velocity body y' : (None, CVConst()), # rot rate on Y (yaw) axis (+=CW, -=CCW), angular units/sec
-    'rotation velocity body z' : (None, CVConst()), # rot rate on Z (roll) axis (+=left, -=right), angular units/sec
-    'stall warning' : (None, CVConst()), # true if stall warning is on, bool
-    'surface type' : (None, CVConst(1)), # 1 = grass, 4=asphalt, 0=concrete, 3=grass bumpy, 5=short grass
-    'velocity world y' : (None, CVConst()), # vertical speed, defaults to feet/sec
+    # Appear to be missing from FFS
+    # -- flight properties here --
+    'stall warning' : (None, 'bool', False), # true if stall warning is on, bool
+    'surface type' : (None, None, 4), # 1 = grass, 4=asphalt, 0=concrete, 3=grass bumpy, 5=short grass
+    'gear center position' : (None, None, 0), # % center gear extended, 0..1
+    'gear left position' : (None, None, 0), # % left gear extended, 0..1 (0=retracted)
+    'gear right position' : (None, None, 0), # % right gear extended, 0..1
 
-    # info about the aircraft
-    'design speed vc' : (None, CVConst(0)), # design speed at VC (cruising speed), feet/sec
-    'design speed vs0' : (None, CVConst(0)), # design speed at VS0 (stall speed in landing config), feet/sec
-    'engine type' : (None, CVConst()), # engine type: 0=piston, 1=jet, 2=none, 5=turboprop
-    'is gear retractable' : (None, CVConst()), # bool
-    'is tail dragger' : (None, CVConst()), # bool
-    'stall alpha' : (None, CVConst()), # stall alpha, radians
-    'visual model radius' : (None, CVConst(16.4)), # model radius, meters
-
-    # once we get more important stuff working
-    'autopilot altitude lock' : (None, CVConst(False)),
-    'autopilot approach hold' : (None, CVConst(False)),
-    'autopilot attitude hold' : (None, CVConst(False)),
-    'autopilot backcourse hold' : (None, CVConst(False)),
-    'autopilot glideslope hold' : (None, CVConst(False)),
-    'autopilot heading lock' : (None, CVConst(False)),
-    'autopilot master' : (None, CVConst(False)),
-    'autopilot nav1 lock' : (None, CVConst(False)),
-    'autopilot vertical hold' : (None, CVConst(False)),
-
-    # someday, maybe, probably not
-    'cable caught by tailhook' : (None, CVConst(0)),
-    'is slew active' : (None, CVConst()), # slew active?, bool (vs flight model)
-    'turb eng afterburner:1' : (None, CVConst()), # afterburner state, bool
-    'turb eng n1:1' : (None, CVConst()), # turbine engine N1, perc
+    # -- aircraft properties here --
+    'is gear retractable' : (None, 'bool', True), # bool
+    'visual model radius' : (None, None, 16.4), # model radius, meters
+    'is tail dragger' : (None, 'bool', False), # bool
+    'design speed vc' : (None, None, 20), # design speed at VC (cruising speed), feet/sec
+    'design speed vs0' : (None, None, 20), # design speed at VS0 (stall speed in landing config), feet/sec
+    'engine type' : (None, None, 0), # engine type: 0=piston, 1=jet, 2=none, 5=turboprop
 }
 
-def GetSimVarNameAndConverter(fsxName):
-    '''Given a simvar name from FSX, return the equivalent FlyInside simvar name and a converter function for its values'''
-    # see https://docs.microsoft.com/en-us/previous-versions/microsoft-esp/cc526981%28v%3dmsdn.10%29 for fsx var names
-    entry = FSX_FFS_MAP.get(fsxName.lower())
-    if entry is None:
-        log('WARNING: no simvar mapping for', fsxName)
-        return '[%s]' % fsxName, CVDummy
-    ffsName, converted = entry
-    # to aid in development, a name of None means we just wrap the FSX name in brackets (so we know it's been dummied up)
-    if ffsName is None:
-        ffsName = '[%s]' % fsxName
-    return ffsName, converted
+OLD_MAP = {
+    '':'Aircraft.Input.Roll',
+    '':'SimState.Paused',
+}
+
+def ConvertValue(ffsName, ffsVal, ffsUnits, fsxUnits):
+    '''Given a value from FlyInside and in the given units, convert it to the given FSX units'''
+    ffsUnits = (ffsUnits or '').strip().lower()
+    fsxUnits = (fsxUnits or '').strip().lower()
+    if ffsUnits == fsxUnits:
+        return ffsVal
+    if ffsUnits == 'meters per second' and fsxUnits == 'knots':
+        return ffsVal * 1.94384
+
+    log('CONVERT:', ffsName, repr((ffsVal, ffsUnits, fsxUnits)))
 
 class DataDefinitionEntry:
     '''one item of info a in a data definition'''
     def __init__(self, msg):
-        self.fsxName = msg.datumName
-        self.ffsName, self.FFSValueToFSX = GetSimVarNameAndConverter(self.fsxName)
+        self.fsxName = msg.datumName.lower()
+        self.ffsName, self.ffsUnits, self.defaultValue = FSX_FFS_MAP[self.fsxName]
         self.units = msg.unitsName
         self.type = msg.dataType
         self.epsilon = msg.epsilon
@@ -346,8 +331,10 @@ class DataDefinitionEntry:
     def ExtractValue(self, varValues):
         '''Extracts the current value from the given set of values, returning None if the value is not
         found. Converts the value (based on self.units) if needed before returning it.'''
-        cur = varValues.get(self.ffsName)
-        return self.FFSValueToFSX(cur, self.units)
+        if not self.ffsName in varValues:
+            return self.defaultValue
+        ffsVal = varValues[self.ffsName]
+        return ConvertValue(self.ffsName, ffsVal, self.ffsUnits, self.units)
 
     def HasChanged(self, extractedValue):
         '''Using a value from ExtractValue, returns True if the value has changed (taking into account
@@ -499,12 +486,13 @@ class ConnectionHandler:
         '''used by other methods to send a message to the client, setting the _protocol
         member of the message first'''
         msg._protocol = self.protocol
-        log('SENDING TO SIM:', msg)
+        #log('SENDING TO SIM:', msg)
         self.client.Send(msg)
 
     def Tick(self, varValues):
         '''called periodically to see if we need to send any new messages to the client. varValues is a dict
         of simVarName -> most recent value'''
+        keep = []
         toDelete = []
         for dr in self.activeDataRequests:
             if not dr.Due():
