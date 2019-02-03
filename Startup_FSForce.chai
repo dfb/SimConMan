@@ -4,6 +4,7 @@ use("Data/Scripts/Includes/SimFuncs.chai");
 // so each variable or sim event name that will be used needs to be listed here
 global varNames = [
     "Aircraft.Controls.Engine.Throttle",
+    "Aircraft.Dynamics.Alpha",
     "Aircraft.Engine.1.Piston.RPMPercent",
     "Aircraft.Input.GearLever.Down",
     "Aircraft.Input.Pitch",
@@ -22,14 +23,16 @@ global varNames = [
     "Aircraft.Status.OnGround",
     "Aircraft.Status.PitotIce.Percent",
     "Aircraft.Surfaces.Aileron.Left.Percent",
+    "Aircraft.Surfaces.Elevator.Percent",
     "Aircraft.Surfaces.Elevator.Trim.Angle",
-    "Aircraft.Wheel.Center.Rotation.RPM",
-    "SimState.Paused",
     "Aircraft.Velocity.Rotation.Local.X",
     "Aircraft.Velocity.Rotation.Local.Y",
     "Aircraft.Velocity.Rotation.Local.Z",
-    "World.Wind.Velocity.Local.Y",
-    "Aircraft.Dynamics.Alpha"
+    "Aircraft.Wheel.Center.Rotation.RPM",
+    "Aircraft.Wheel.Left.Input.BrakeStrength",
+    "Aircraft.Wheel.Right.Input.BrakeStrength",
+    "SimState.Paused",
+    "World.Wind.Velocity.Local.Y"
 ]
 global varToIDMap = Map() // name from varNames --> ID as a string
 
@@ -39,8 +42,6 @@ global inAddr = createNetworkAddress("127.0.0.1", inPort);
 global outAddr = createNetworkAddress("127.0.0.1", 61000);
 global onDat;
 global udp = UDPSocket();
-global outMessage = "";
-global messages = [];
 
 def onUDPMessage(addr, msg)
 {
@@ -193,25 +194,15 @@ def onGraphicsFrame()
     checkForFChanges("Aircraft.Velocity.Rotation.Local.Z", 0.1);
     checkForFChanges("World.Wind.Velocity.Local.Y", 1);
     checkForFChanges("Aircraft.Dynamics.Alpha", 0.1);
+    checkForFChanges("Aircraft.Wheel.Left.Input.BrakeStrength", 1);
+    checkForFChanges("Aircraft.Wheel.Right.Input.BrakeStrength", 1);
+    checkForFChanges("Aircraft.Surfaces.Elevator.Percent", 0.25);
+    checkForFChanges("Aircraft.Surfaces.Aileron.Left.Percent", 0.25);
 }
 
 def onUIFrame()
 {
-	auto& ui = GetUI();
-    ui.startWindow("FSForce");
-    ui.inputString("Text", outMessage);
-    ui.sameLine();
-    if(ui.button("Send"))
-    {
-        udp.sendData(outAddr, outMessage);
-        messages.push_back("You: " +outMessage);
-        outMessage = "";
-    }
-    
-    for (auto i = 0; i < messages.size(); ++i)
-    {
-        ui.text(messages[i]);
-    }
-    
-    ui.endWindow();
+	//auto& ui = GetUI();
+    //ui.startWindow("FSForce");
+    //ui.endWindow();
 }

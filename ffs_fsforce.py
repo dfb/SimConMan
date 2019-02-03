@@ -59,10 +59,10 @@ class GV:
 class FlyInsideConnector:
     '''connects to and communicates with the FlyInside Flight Sim'''
     def __init__(self, recvPort, sendPort):
-        self.scConnections = {} # handler ID -> ConnectionHandler (to SimConnect)0
-        self.systemEventHandlers = {} # system event (e.g. 'SimStart') -> [list of (handlerID, client event num)]
+        self.scConnections = {} # handler ID -> ConnectionHandler (to SimConnect)
         self.recvPort = recvPort
         self.sendPort = sendPort
+        self.lastPaused = None
 
         self.varToValues = {} # sim variable name to most recent value from sim
         self.outgoingMessages = []
@@ -139,12 +139,6 @@ class FlyInsideConnector:
         '''use this to send a message to the flight sim'''
         self.outgoingMessages.append(msg)
 
-    def RegisterForSystemEvent(self, eventName, conn, clientEventNum):
-        '''called by ConnectionHandlers to notify us that a SimConnect connection wants to receive a
-        particular system event'''
-        self.scConnections[conn.handlerID] = conn
-        self.systemEventHandlers.setdefault(eventName, []).append((conn.handlerID, clientEventNum))
-
     def IsPaused(self):
         '''returns True if sim is paused'''
         return not not self.varToValues.get('SimState.Paused')
@@ -153,6 +147,23 @@ class FlyInsideConnector:
         '''to be someday called periodically'''
         if not self.varToValues:
             return # startup, nothing to do yet
+
+        # Check to see if the paused state has changed. FFS doesn't seem to differentiate between the sim being stopped vs paused so
+        # for now we treat them the same
+        nowPaused = self.IsPaused()
+        if nowPaused != self.lastPaused:
+            running = int(not nowPaused)
+            sysGroupID = 4294967295
+            self.lastPaused = nowPaused
+            self.FireEvent('Sim', sysGroupID, running)
+            self.FireEvent('Pause', sysGroupID, int(nowPaused))
+            if nowPaused:
+                self.FireEvent('SimStop', sysGroupID, 0)
+                self.FireEvent('Paused', sysGroupID, 0)
+            else:
+                self.FireEvent('SimStart', sysGroupID, 0)
+                self.FireEvent('Unpaused', sysGroupID, 0)
+
         for handlerID, conn in list(self.scConnections.items()):
             try:
                 conn.Tick(self.varToValues)
@@ -161,13 +172,13 @@ class FlyInsideConnector:
                 log('Failed to tick', handlerID, '- dropping the connection')
                 del self.scConnections[handlerID]
 
-    def FireEvent(self, eventName, **kwargs):
+    def FireEvent(self, eventName, groupID, data):
         '''dispatches a named sim event to all clients'''
         # TODO: we're supposed to fire the event in priority order to each client
-        # TODO: clients can mask an event, preventing us from firing it to other clients (maybe let OnSimEvent return a value or raise an exception to stop firing?
-        for handlerID, conn in self.scConnections.items()[:]:
+        # TODO: clients can mask an event, preventing us from firing it to other clients (maybe let FireSimEvent return a value or raise an exception to stop firing?
+        for handlerID, conn in list(self.scConnections.items()):
             try:
-                conn.OnSimEvent(eventName, **kwargs)
+                conn.FireSimEvent(eventName, groupID, data)
             except:
                 logTB()
                 log('Failed to deliver sim event', eventName, 'to', handlerID, '- dropping the connection')
@@ -240,11 +251,25 @@ def ValueToBytes(v, dataType):
     # DATATYPE_WSTRING260,     # 260 character wide string
     # DATATYPE_WSTRINGV) =range(28) # variable-length wide string
 
+def SpoofCenterWheelRPM(varValues, units):
+    rpm = 0
+    if varValues['Aircraft.Status.OnGround']:
+        # gear extended
+        groundSpeed = varValues['Aircraft.Position.GroundSpeed.Value'] # in m/s
+        tireCircumference = 1.5 # 1.5m? sure, ok!
+        revsPerSec = groundSpeed / tireCircumference
+        rpm = revsPerSec * 60.0
+    return rpm
+
+def SpoofAirplaneName(varValues, units):
+    return 'Alabeo Extra 300s Halcones'
+
 # Mapping from FSX variables to FFS variables. Each entry is
 # fsx var name -> (ffs var name, ffs unit or None if no conversion is needed, default if missing)
 FSX_FFS_MAP = {
     # Entries that have received at least cursory validation, or are ones we're stubbing out for now
-    'title': ('Aircraft.Properties.Name', None, 'MyPlane'),
+    #'title': ('Aircraft.Properties.Name', None, 'Alabeo Extra 300s Halcones'),
+    'title': (SpoofAirplaneName, None, 'my plane'),
     'category': (None, None, 'Airplane'),
     'is slew active' : (None, None, False), # is slew active (vs flight model active)
     'airspeed true':('Aircraft.Position.Airspeed.True', 'meters per second', 0),
@@ -261,13 +286,14 @@ FSX_FFS_MAP = {
     'autopilot vertical hold' : (None, 'bool', False),
     'sim on ground': ('Aircraft.Status.OnGround', 'bool', True),
     'stall alpha' : ('Aircraft.Properties.Dynamics.StallAlpha', 'radians', 0.26), # stall alpha, radians
-    'pitot ice pct' : ('Aircraft.Status.PitotIce.Percent', '0..1', 0),
+    'pitot ice pct' : ('Aircraft.Status.PitotIce.Percent', 'percent over 100', 0),
     'plane latitude' : ('Aircraft.Position.Latitude', 'degrees', 0), # N latitude, radians
     'plane longitude' : ('Aircraft.Position.Longitude', 'degrees', 0), # E longitude, radians
     'cable caught by tailhook' : (None, 'bool', False),
     'plane alt above ground' : ('Aircraft.Position.Altitude.Radar', 'meters', 0),
     'plane altitude' : ('Aircraft.Position.Altitude.True', 'meters', 0), # I'm not 100% sure this FSX var is true alt, but there are separate vars for AGL and indicated
-    'center wheel rpm':('Aircraft.Wheel.Center.Rotation.RPM', 'rpm', 0),
+    #'center wheel rpm':('Aircraft.Wheel.Center.Rotation.RPM', 'rpm', 0),
+    'center wheel rpm':(SpoofCenterWheelRPM, 'rpm', 0),
     'velocity world y' : ('Aircraft.Position.VerticalSpeed.Value', 'meters per second', 0), # vertical speed, defaults to feet/sec
     'gear handle position' : ('Aircraft.Input.GearLever.Down', 'percent', True), # 1.0 if gear handle in "extended" pos, 0 if in retracted pos
     'general eng pct max rpm:1' : ('Aircraft.Engine.1.Piston.RPMPercent', 'percent', 50), # % of max rated RPM
@@ -302,18 +328,26 @@ FSX_FFS_MAP = {
 }
 
 OLD_MAP = {
-    '':'Aircraft.Input.Roll',
     '':'SimState.Paused',
 }
 
 def ConvertValue(ffsName, ffsVal, ffsUnits, fsxUnits):
     '''Given a value from FlyInside and in the given units, convert it to the given FSX units'''
+    # TODO: rewrite this to be less lame - maybe look up a converter func once on startup?
     ffsUnits = (ffsUnits or '').strip().lower()
     fsxUnits = (fsxUnits or '').strip().lower()
     if ffsUnits == fsxUnits:
         return ffsVal
     if ffsUnits == 'meters per second' and fsxUnits == 'knots':
         return ffsVal * 1.94384
+    if (ffsUnits == 'radians' and fsxUnits == 'degrees') or (ffsUnits == 'radians per second' and fsxUnits == 'degrees per second'):
+        return ffsVal * 57.2958
+    if ffsUnits == 'meters' and fsxUnits == 'feet':
+        return ffsVal * 3.28084
+    if ffsUnits == 'meters per second' and fsxUnits == 'feet per minute':
+        return ffsVal * 196.8504
+    if ffsUnits == 'percent' and fsxUnits == 'bool':
+        return ffsVal > 0 # should this be != 0 instead? right now just using it for gear lever down, mapping 100.0 --> true
 
     log('CONVERT:', ffsName, repr((ffsVal, ffsUnits, fsxUnits)))
 
@@ -331,6 +365,10 @@ class DataDefinitionEntry:
     def ExtractValue(self, varValues):
         '''Extracts the current value from the given set of values, returning None if the value is not
         found. Converts the value (based on self.units) if needed before returning it.'''
+        if callable(self.ffsName):
+            # A total (and hopefully temporary) hack: if ffsName is actually a function, it's a way for us
+            # to fabricate values that FFS doesn't yet provide
+            return self.ffsName(varValues, self.units)
         if not self.ffsName in varValues:
             return self.defaultValue
         ffsVal = varValues[self.ffsName]
@@ -436,26 +474,44 @@ class ObjectDataRequest:
         msg.defineCount = len(msg.data) // 8 # docs say "number of 8-byte elements in the dwData array"
         return msg, finished
 
+# names of official FSX events that either (a) we support or (b) have no intention of supporting anytime soon
+# (this list exists to help call out when a SimConnect client uses an event we haven't implemented support for)
+KNOWN_SIM_EVENT_NAMES = [
+    'axis_left_brake_set',
+    'axis_right_brake_set',
+    'axis_elevator_set',
+    'app_att_hold',
+    'axis_ailerons_set',
+    'takeoff_assist_fire',
+]
+
+KNOWN_INPUT_EVENT_NAMES = [
+    'joystick:0:yaxis',
+    'joystick:0:xaxis',
+]
+
 class ConnectionHandler:
     nextID = 0
     @staticmethod
-    def Create(sock, fic):
-        c = ConnectionHandler(sock, fic)
+    def Create(connNum, sock, fic):
+        c = ConnectionHandler(connNum, sock, fic)
+        fic.scConnections[connNum] = c
         t = threading.Thread(target=c.Handle)
         t.daemon = True
         t.start()
         return c
 
-    def __init__(self, sock, fic):
-        self.handlerID = ConnectionHandler.nextID
+    def __init__(self, connNum, sock, fic):
+        self.handlerID = connNum
         ConnectionHandler.nextID += 1
         self.client = connection.ClientConnection(sock)
         self.fic = fic
         self.protocol = -1
         self.dataDefs = {} # def ID --> [ items ]
-        self.simEventMap = {} # sim event name --> client event ID
+        self.simEventIDToName = {} # client event ID --> sim event name
+        self.simEventNameToID = {} # sim event name -> client event ID
         self.notificationGroups = {} # client notification group ID -> PriorityGroup instance
-        self.inputGroups = {} # client mapped input event group -> PrioritGroup instance
+        self.inputGroups = {} # client mapped input event group ID -> PrioritGroup instance
         self.activeDataRequests = [] # pending (and possibly repeating) requests from the sim for data
 
     def Handle(self):
@@ -474,6 +530,7 @@ class ConnectionHandler:
                         log('[%s]' % self.handlerID, msg)
                         continue
                     self.protocol = msg._protocol # really needed only once
+                    log('[%d]' % self.handlerID, msg)
                     handler(msg)
 
                 # don't spin
@@ -486,7 +543,7 @@ class ConnectionHandler:
         '''used by other methods to send a message to the client, setting the _protocol
         member of the message first'''
         msg._protocol = self.protocol
-        #log('SENDING TO SIM:', msg)
+        log('[%d]' % self.handlerID, msg)
         self.client.Send(msg)
 
     def Tick(self, varValues):
@@ -494,6 +551,8 @@ class ConnectionHandler:
         of simVarName -> most recent value'''
         keep = []
         toDelete = []
+
+        # Fire off any events for requested data
         for dr in self.activeDataRequests:
             if not dr.Due():
                 continue
@@ -509,9 +568,75 @@ class ConnectionHandler:
             if msg is not None:
                 self.Send(msg)
 
+        # Generate any mapped sim events - TODO: the method of mapping seems... hacky
+        G = varValues.get
+        self.GenSimEvent('axis_ailerons_set', G('Aircraft.Surfaces.Aileron.Left.Percent'), -163.84, 0, -16384, 16384) # -100 left / 100 right --> 16384 left / -16384 right
+        self.GenSimEvent('axis_elevator_set', G('Aircraft.Surfaces.Elevator.Percent'), -163.84, 0, -16384, 16384) # -100 down / 100 up --> -16384 up / 16384 down
+        self.GenSimEvent('axis_left_brake_set', G('Aircraft.Wheel.Left.Input.BrakeStrength'), 327.68, -16384, -16384, 16384) # 0..100 --> -16384 no brakes / 16384 max brakes
+        self.GenSimEvent('axis_right_brake_set', G('Aircraft.Wheel.Right.Input.BrakeStrength'), 327.68, -16384, -16384, 16384) # 0..100 --> -16384 no brakes / 16384 max brakes
+
+        # Generate any mapped input events
+        self.GenInputEvent('joystick:0:xaxis', G('Aircraft.Input.Pitch'), 327.68, 0, -32767, 32768) # -100 fwd / 100 back --> -32k=fwd / 32k=back
+        self.GenInputEvent('joystick:0:yaxis', G('Aircraft.Input.Roll'), 327.68, 0, -32767, 32768) # -100 left / 100 right --> -32k=left / 32k=right
+
         # Remove any data requests that are now completely fulfilled
         for dr in toDelete:
             self.activeDataRequests.remove(dr)
+
+    # Aircraft.Wheel.Left.Input.BrakeStrength - 0..100
+    # Aircraft.Wheel.Right.Input.BrakeStrength - 0..100
+    # AXIS_LEFT_BRAKE_SET', 52, False), # -16384=no brakes, 16384=max brakes
+    # AXIS_RIGHT_BRAKE_SET', 53, False), # -16384=no brakes, 16384=max brakes
+    def GenSimEvent(self, fsxEventName, value, scale, offset, minVal, maxVal):
+        '''Generates a sim event if the client subscribes to it'''
+        eventID = self.simEventNameToID.get(fsxEventName)
+        if eventID is None:
+            return
+
+        # figure out the group ID
+        # TODO: prolly cache this lookup somewhere
+        groupID = None
+        for group in self.notificationGroups.values():
+            if eventID in group.members:
+                groupID = group.groupID
+                break
+        if groupID is None:
+            log('ERROR: GenSimEvent for', fsxEventName, 'cannot find group ID')
+            return
+
+        # Convert the value from FFS units to FSX units
+        value = value * scale + offset
+        value = min(value, maxVal)
+        value = max(value, minVal)
+        value = int(value)
+
+        self.Send(message.SEvent(groupID=groupID, eventID=eventID, data=value, flags=0))
+
+    def GenInputEvent(self, fsxEventName, value, scale, offset, minVal, maxVal):
+        '''Generates an input event if the client subscribes to it'''
+        # TODO: combine this with GenSimEvent because it differs only in looking in self.inputGroups!!
+        eventID = self.simEventNameToID.get(fsxEventName)
+        if eventID is None:
+            return
+
+        # figure out the group ID
+        # TODO: prolly cache this lookup somewhere
+        groupID = None
+        for group in self.inputGroups.values():
+            if eventID in group.members:
+                groupID = group.groupID
+                break
+        if groupID is None:
+            log('ERROR: GenSimEvent for', fsxEventName, 'cannot find group ID')
+            return
+
+        # Convert the value from FFS units to FSX units
+        value = value * scale + offset
+        value = min(value, maxVal)
+        value = max(value, minVal)
+        value = int(value)
+
+        self.Send(message.SEvent(groupID=groupID, eventID=eventID, data=value, flags=0))
 
     def OnCOpen(self, msg):
         resp = message.SOpen()
@@ -525,8 +650,14 @@ class ConnectionHandler:
         self.Send(resp)
 
     def OnCSubscribeToSystemEvent(self, msg):
-        # TODO: have fic always send this to us, and then we decide whether or not to send to the client
-        self.fic.RegisterForSystemEvent(msg.eventName, self, msg.clientEventID)
+        # So far it seems that we can just store these in our simEvent maps and let the normal stuff handle them
+        self.simEventIDToName[msg.clientEventID] = msg.eventName.lower()
+        self.simEventNameToID[msg.eventName] = msg.clientEventID
+        # In addition to registering for changes, for some events we immediately send back the current state
+        if msg.eventName == 'Pause':
+            self.Send(message.SEvent(groupID=4294967295, eventID=msg.clientEventID, flags=0, data=int(self.fic.IsPaused())))
+        elif msg.eventName == 'Sim':
+            self.Send(message.SEvent(groupID=4294967295, eventID=msg.clientEventID, flags=0, data=int(not self.fic.IsPaused())))
 
     def OnCRequestJoystickDeviceInfo(self, msg):
         resp = message.SJoystickDeviceInfo()
@@ -552,22 +683,32 @@ class ConnectionHandler:
         self.dataDefs.setdefault(msg.dataDefinitionID, []).append(DataDefinitionEntry(msg))
 
     def OnCMapClientEventToSimEvent(self, msg):
-        # TODO: make sure we handle all desired sim events
-        self.simEventMap[msg.eventName] = msg.eventID
+        if msg.eventName:
+            # Warn on offivial sem events we don't know how to handle
+            if '.' not in msg.eventName and msg.eventName.lower() not in KNOWN_SIM_EVENT_NAMES:
+                log('WARNING: will not handle', msg)
+                return
+            self.simEventIDToName[msg.eventID] = msg.eventName.lower()
+            self.simEventNameToID[msg.eventName] = msg.eventID
+        else:
+            # if msg.eventName == '', it seems to be used only in cases where the client is going to turn around and map an input
+            # event to a client event (i.e. perhaps you have to "register" the event ID even if it's just a dummy before you can
+            # use it in an input event mapping?)
+            pass
 
     def GetNotificationGroup(self, groupID):
-        g = self.notificationGroups.get(id)
+        g = self.notificationGroups.get(groupID)
         if g is None:
-            g = PriorityGroup(id)
-            self.notificationGroups[id] = g
+            g = PriorityGroup(groupID)
+            self.notificationGroups[groupID] = g
         return g
 
     def GetInputGroup(self, groupID):
-        g = self.inputGroups.get(id)
+        g = self.inputGroups.get(groupID)
         if g is None:
-            g = PriorityGroup(id)
+            g = PriorityGroup(groupID)
             g.enabled = False
-            self.inputGroups[id] = g
+            self.inputGroups[groupID] = g
         return g
 
     def OnCAddClientEventToNotificationGroup(self, msg):
@@ -579,6 +720,9 @@ class ConnectionHandler:
         g.priority = msg.priority
 
     def OnCMapInputEventToClientEvent(self, msg):
+        if msg.definition.lower() not in KNOWN_INPUT_EVENT_NAMES:
+            log('WARNING: will not handle', msg)
+            return
         g = self.GetInputGroup(msg.groupID)
         # TODO: make sure fic fires desired input events
         m = InputEventInfo()
@@ -587,7 +731,7 @@ class ConnectionHandler:
         m.upID = msg.upID
         m.upValue = msg.upValue
         m.maskable = msg.maskable
-        g.members[msg.definition] = m
+        g.members[msg.definition.lower()] = m
 
     def OnCSetInputGroupState(self, msg):
         g = self.GetInputGroup(msg.groupID)
@@ -606,8 +750,19 @@ class ConnectionHandler:
         self.activeDataRequests.append(ObjectDataRequest(msg))
 
     def OnCTransmitClientEvent(self, msg):
-        pass
-        # TODO: follow all the simconnect doc rules
+        if msg.objectID != SC.OBJECT_ID_USER:
+            log('WARNING: not handling', msg)
+            return
+        # TODO: handle flags and groupID (which is sometimes actually the priority)
+        eventName = self.simEventIDToName[msg.eventID]
+        self.fic.FireEvent(eventName, msg.groupID, msg.data)
+
+    def FireSimEvent(self, eventName, groupID, data):
+        '''called by FlyInsideConnector to cause an SEvent to be sent to the SimConnect client
+        if this client subscribes to this event'''
+        eventID = self.simEventNameToID.get(eventName)
+        if eventID is not None:
+            self.Send(message.SEvent(groupID=groupID, eventID=eventID, data=data, flags=0))
 
 def FSForceListener(port, fic):
     '''creates a dummy simconnect server to handle messages from FSForce, then loads FSForce
@@ -623,11 +778,13 @@ def FSForceListener(port, fic):
     runner = fsfloader.FSForceRunner()
     runner.Start()
 
+    connNum = 0
     while 1:
         try:
             q,v = sock.accept()
             log('Accepting connection')
-            ConnectionHandler.Create(q, fic)
+            ConnectionHandler.Create(connNum, q, fic)
+            connNum += 1
         except BlockingIOError:
             try:
                 time.sleep(0.25)

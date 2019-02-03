@@ -51,7 +51,7 @@ class FSForceRunner:
             assert self.hInst
 
             # Register our custom window class and create message only window
-            className = 'FS89MAIN' # TODO: once we no longer need the proxy, use FS98MAIN and unpatched FSForce
+            className = 'FS89MAIN' # TODO: once we no longer need the proxy, use FS98MAIN (instead of 89) and unpatched FSForce
             wc = WNDCLASSEX()
             wc.cbSize = sizeof(WNDCLASSEX)
             wc.lpfnWndProc = WNDPROCTYPE(WndProc)
@@ -97,6 +97,7 @@ class FSForceRunner:
             self.running = False
 
 if __name__ == '__main__':
+    print('sleeping') ; time.sleep(2) ; print('going')
     runner = FSForceRunner()
     runner.Start()
     try:
