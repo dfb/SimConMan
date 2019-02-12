@@ -63,6 +63,8 @@ class FlyInsideConnector:
         self.recvPort = recvPort
         self.sendPort = sendPort
         self.lastPaused = None
+        self.simRunning = False
+        self.lastSimRunning = False
 
         self.varToValues = {} # sim variable name to most recent value from sim
         self.outgoingMessages = []
@@ -148,22 +150,23 @@ class FlyInsideConnector:
         if not self.varToValues:
             return # startup, nothing to do yet
 
-        # Check to see if the paused state has changed. FFS doesn't seem to differentiate between the sim being stopped vs paused so
-        # for now we treat them the same
-        nowPaused = self.IsPaused()
-        if nowPaused != self.lastPaused:
-            running = int(not nowPaused)
-            sysGroupID = 4294967295
-            self.lastPaused = nowPaused
-            self.FireEvent('Sim', sysGroupID, running)
-            self.FireEvent('Pause', sysGroupID, int(nowPaused))
-            if nowPaused:
-                self.FireEvent('SimStop', sysGroupID, 0)
-                self.FireEvent('Paused', sysGroupID, 0)
-            else:
-                self.FireEvent('SimStart', sysGroupID, 0)
-                self.FireEvent('Unpaused', sysGroupID, 0)
+        sysGroupID = 4294967295
 
+        # Hack: FFS doesn't seem to have the notion of SimStart/SimStop (just has paused vs not), but FSForce seems to need it during
+        # startup. So we launch when paused and then the first time we unpause, we trigger a transition to sim running
+        if not self.simRunning and not self.IsPaused():
+            self.simRunning = True
+
+        # Check to see if the sim state has changed
+        if self.simRunning != self.lastSimRunning:
+            self.lastSimRunning = self.simRunning
+            self.FireEvent('Sim', sysGroupID, int(self.simRunning))
+            if self.simRunning:
+                self.FireEvent('SimStart', sysGroupID, 0)
+            else:
+                self.FireEvent('SimStop', sysGroupID, 0)
+
+        # Check to see if the paused state has changed.
         for handlerID, conn in list(self.scConnections.items()):
             try:
                 conn.Tick(self.varToValues)
@@ -171,6 +174,17 @@ class FlyInsideConnector:
                 logTB()
                 log('Failed to tick', handlerID, '- dropping the connection')
                 del self.scConnections[handlerID]
+
+        nowPaused = self.IsPaused()
+        if nowPaused != self.lastPaused:
+            running = int(not nowPaused)
+            self.lastPaused = nowPaused
+            self.FireEvent('Pause', sysGroupID, int(nowPaused))
+            if nowPaused:
+                self.FireEvent('Paused', sysGroupID, 0)
+            else:
+                self.FireEvent('Unpaused', sysGroupID, 0)
+
 
     def FireEvent(self, eventName, groupID, data):
         '''dispatches a named sim event to all clients'''
@@ -220,10 +234,10 @@ def _VS(s, wide, maxLen):
 
 def ValueToBytes(v, dataType):
     '''Converts the given value into bytes based on the given SC.DATATYPE'''
-    if dataType == SC.DATATYPE.INT32: return struct.pack('<i', dataType)
-    if dataType == SC.DATATYPE.INT64: return struct.pack('<q', dataType)
-    if dataType == SC.DATATYPE.FLOAT32: return struct.pack('<f', dataType)
-    if dataType == SC.DATATYPE.FLOAT64: return struct.pack('<d', dataType)
+    if dataType == SC.DATATYPE.INT32: return struct.pack('<i', v)
+    if dataType == SC.DATATYPE.INT64: return struct.pack('<q', v)
+    if dataType == SC.DATATYPE.FLOAT32: return struct.pack('<f', v)
+    if dataType == SC.DATATYPE.FLOAT64: return struct.pack('<d', v)
     if dataType == SC.DATATYPE.STRING8: return _VS(v, False, 8)
     if dataType == SC.DATATYPE.STRING32: return _VS(v, False, 32)
     if dataType == SC.DATATYPE.STRING64: return _VS(v, False, 64)
@@ -408,17 +422,26 @@ class DataDefinitionEntry:
 class ObjectDataRequest:
     def __init__(self, msg):
         # warn on not implemented stuff that is probably ok
-        if msg.origin != 0: log('WARNING: ignoring origin in', msg)
         if msg.limit != 0: log('WARNING: ignoring limit in', msg)
-        if msg.interval != 0: log('WARNING: ignoring interval in', msg)
         self.requestID = msg.requestID
         self.objectID = msg.objectID
         self.definitionID = msg.definitionID
         self.period = msg.period
+        self.interval = msg.interval
         self.flags = msg.flags
+        self.sendCountdown = msg.origin # wait this many more times before sending it again
         self.taggedFormat = not not (msg.flags & SC.DATA_REQUEST_FLAG.TAGGED) # return values in tagged format?
         self.onlyWhenChanged = not not (msg.flags & SC.DATA_REQUEST_FLAG.CHANGED) # send always or only if it changed?
         self.lastSent = None # timestamp of when we last fulfilled the request
+
+    def CountdownInterval(self):
+        '''called to give the data request a chance to count down according to its send interval. Returns False if
+        it needs to wait longer before its next time to send.'''
+        if self.sendCountdown > 0:
+            self.sendCountdown -= 1
+            return False
+        self.sendCountdown = self.interval
+        return True
 
     def Due(self):
         '''Returns True if it's time to send data for this request again'''
@@ -471,7 +494,7 @@ class ObjectDataRequest:
         msg = message.SSimObjectData(requestID=self.requestID, objectID=self.objectID, definitionID=self.definitionID,
                                      entryNumber=1, outOf=1, flags=self.flags)
         msg.data = b''.join(entries)
-        msg.defineCount = len(msg.data) // 8 # docs say "number of 8-byte elements in the dwData array"
+        msg.defineCount = len(entries)
         return msg, finished
 
 # names of official FSX events that either (a) we support or (b) have no intention of supporting anytime soon
@@ -554,6 +577,8 @@ class ConnectionHandler:
 
         # Fire off any events for requested data
         for dr in self.activeDataRequests:
+            if not dr.CountdownInterval():
+                continue
             if not dr.Due():
                 continue
 
@@ -657,7 +682,7 @@ class ConnectionHandler:
         if msg.eventName == 'Pause':
             self.Send(message.SEvent(groupID=4294967295, eventID=msg.clientEventID, flags=0, data=int(self.fic.IsPaused())))
         elif msg.eventName == 'Sim':
-            self.Send(message.SEvent(groupID=4294967295, eventID=msg.clientEventID, flags=0, data=int(not self.fic.IsPaused())))
+            self.Send(message.SEvent(groupID=4294967295, eventID=msg.clientEventID, flags=0, data=int(self.fic.simRunning)))
 
     def OnCRequestJoystickDeviceInfo(self, msg):
         resp = message.SJoystickDeviceInfo()
@@ -673,7 +698,7 @@ class ConnectionHandler:
     def OnCRequestSystemState(self, msg):
         resp = message.SSystemState(requestID=msg.requestID, dataInteger=0, dataFloat=0.0, dataString='')
         if msg.stateName == 'Sim':
-            resp.dataInteger = 0 if self.fic.IsPaused() else 1
+            resp.dataInteger = int(self.fic.simRunning)
             self.Send(resp)
         else:
             # TODO: handle other cases

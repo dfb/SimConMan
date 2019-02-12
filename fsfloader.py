@@ -44,6 +44,7 @@ class FSForceRunner:
                 print('WARNING: message thread is still running')
 
     def _Thread(self):
+        time.sleep(1)
         self.running = True
         try:
             # get hInst - since we're starting as a console app, we don't get it via a WinMain
@@ -67,6 +68,7 @@ class FSForceRunner:
                 raise Exception('Failed to create window')
 
             # Load the FSForce DLL
+            time.sleep(1.5)
             fsDLL = windll.LoadLibrary('d:\\Program Files (x86)\\FSForce 2\\FSForce_x64.dll')
             if not fsDLL:
                 raise Exception('Failed to load FSForce_x64.dll')
