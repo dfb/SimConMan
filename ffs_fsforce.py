@@ -800,7 +800,7 @@ def FSForceListener(port, fic):
     log('FSForceListener listening on port', port)
 
     # Now that the server sock is ready, we can fire up FSForce
-    runner = fsfloader.FSForceRunner()
+    runner = fsfloader.FSForceRunner(True)
     runner.Start()
 
     connNum = 0

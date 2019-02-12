@@ -23,9 +23,10 @@ class FSForceRunner:
     '''creates a dummy window that FSForce can send messages to, then spawns FSForce in the background,
     pumping messages in the dummy window until Stop() is called
     '''
-    def __init__(self):
+    def __init__(self, usePatchedVersion):
         self.running = False
         self.keepRunning = False
+        self.usePatchedVersion = usePatchedVersion
 
     def Start(self):
         assert not self.running
@@ -52,7 +53,8 @@ class FSForceRunner:
             assert self.hInst
 
             # Register our custom window class and create message only window
-            className = 'FS89MAIN' # TODO: once we no longer need the proxy, use FS98MAIN (instead of 89) and unpatched FSForce
+            patch = self.usePatchedVersion
+            className = 'FS89MAIN' if patch else 'FS98MAIN'
             wc = WNDCLASSEX()
             wc.cbSize = sizeof(WNDCLASSEX)
             wc.lpfnWndProc = WNDPROCTYPE(WndProc)
@@ -69,17 +71,18 @@ class FSForceRunner:
 
             # Load the FSForce DLL
             time.sleep(1.5)
-            fsDLL = windll.LoadLibrary('d:\\Program Files (x86)\\FSForce 2\\FSForce_x64.dll')
+            fsDLL = windll.LoadLibrary('d:\\Program Files (x86)\\FSForce 2\\FSForce%s_x64.dll' % ('-89' if patch else ''))
             if not fsDLL:
                 raise Exception('Failed to load FSForce_x64.dll')
             print('Starting DLL', fsDLL.DLLStart())
 
             # Kill any prior versions of the FSForce executable, then relaunch
+            exeName = 'FSForce%s.exe' % ('-89' if patch else '')
             for p in psutil.process_iter(attrs=['name']):
-                if p.info['name'] == 'FSForce.exe':
+                if p.info['name'] == exeName:
                     p.kill()
                     print('killed one old instance')
-            fsEXE = subprocess.Popen(['d:\\Program Files (x86)\\FSForce 2\\FSForce.exe', '/FS'])
+            fsEXE = subprocess.Popen(['d:\\Program Files (x86)\\FSForce 2\\' + exeName, '/FS'])
 
             try:
                 # Pump messages til done
@@ -100,7 +103,7 @@ class FSForceRunner:
 
 if __name__ == '__main__':
     print('sleeping') ; time.sleep(2) ; print('going')
-    runner = FSForceRunner()
+    runner = FSForceRunner(True)
     runner.Start()
     try:
         while 1:
