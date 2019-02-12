@@ -1,6 +1,6 @@
 from ctypes import *
 from ctypes.wintypes import *
-import time, sys, subprocess, threading
+import time, sys, subprocess, threading, configparser, os
 import psutil
 
 WM_DESTROY = 0x02
@@ -27,6 +27,10 @@ class FSForceRunner:
         self.running = False
         self.keepRunning = False
         self.usePatchedVersion = usePatchedVersion
+
+        config = configparser.ConfigParser()
+        config.read('config.ini')
+        self.fsfDir = config['FSForce']['Directory']
 
     def Start(self):
         assert not self.running
@@ -71,7 +75,7 @@ class FSForceRunner:
 
             # Load the FSForce DLL
             time.sleep(1.5)
-            fsDLL = windll.LoadLibrary('d:\\Program Files (x86)\\FSForce 2\\FSForce%s_x64.dll' % ('-89' if patch else ''))
+            fsDLL = windll.LoadLibrary(os.path.join(self.fsfDir, 'FSForce%s_x64.dll' % ('-89' if patch else '')))
             if not fsDLL:
                 raise Exception('Failed to load FSForce_x64.dll')
             print('Starting DLL', fsDLL.DLLStart())
@@ -82,7 +86,7 @@ class FSForceRunner:
                 if p.info['name'] == exeName:
                     p.kill()
                     print('killed one old instance')
-            fsEXE = subprocess.Popen(['d:\\Program Files (x86)\\FSForce 2\\' + exeName, '/FS'])
+            fsEXE = subprocess.Popen([os.path.join(self.fsfDir, exeName), '/FS'])
 
             try:
                 # Pump messages til done

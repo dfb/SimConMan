@@ -4,7 +4,7 @@ SimConnect proxy server
 '''
 
 import sys, socket, time, traceback, threading, pickle
-from simconnect import connection
+from simconnect import connection, message
 
 class GV:
     keepRunning = True
@@ -117,15 +117,39 @@ def LoadMsgs(filename):
                 break
     return msgs
 
+dataDefNames = {} # (connID, defID, datumID) --> datum name
+
+import struct
+def Hex(s):
+    s = ['%02X' % x for x in s]
+    return ' '.join(s)
+
+def Moar(connID, msg):
+    ret = ''
+    if msg.flags & 2:
+        data = msg.data[:]
+        for i in range(msg.defineCount):
+            datumID = struct.unpack('<L', data[:4])[0]
+            data = data[4:]
+            ret += '\n        %d:' % datumID + ' ' + Hex(data[:4])
+            ret += ' :' + str(dataDefNames.get((connID, msg.definitionID, datumID)))
+            data = data[4:]
+    return ret
+
 def Dump(msgs, filename):
     with open(filename, 'wt') as f:
         start = msgs[0][0]
         for ts, connID, msg in msgs:
+            if isinstance(msg, message.CAddToDataDefinition):
+                dataDefNames[(connID, msg.dataDefinitionID, msg.datumID)] = msg.datumName
             diffMS = int((ts-start) * 1000)
-            f.write('[%06d,%d] %r\n' % (diffMS, connID, msg))
+            extra = ''
+            if isinstance(msg, message.SSimObjectData):
+                extra = Moar(connID, msg)
+            f.write('[%06d,%d,%s] %r%s\n' % (diffMS, connID, getattr(msg, '_counter', 0),msg, extra))
 
 if __name__ == '__main__':
-    if 0:
+    if 1:
         msgs = sorted(LoadMsgs('proxyconn-0.log') + LoadMsgs('proxyconn-1.log') + LoadMsgs('proxyconn-2.log'), key=lambda x:x[:2])
         Dump(msgs, 'taxiing.log')
     else:

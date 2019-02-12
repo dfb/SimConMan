@@ -17,8 +17,17 @@ The solution I chose was to write a "shim" layer that translates between the plu
 
 Although the main goal is to bridge the specific force feedback plugin with the FlyInside simulator, the SimConnect code in particular may be useful in other projects, and the overall approach could (in theory) be used for other legacy plugins.
 
+Currently a little bit of hackery is required to get FSForce to not talk to the sim.
+
 ## Basic Usage
-This is still very much a work in progress but for now:
+Currently requires Python 3.6 or so. This is still very much a work in progress but for now:
+- Run ```python patch_fsf.py <path to your FS Force install dir>```
+    (Note that you may need to run this from an administrative command prompt. Also, it makes copies of the files it modifies)
 - Put Startup_FSForce.chai in ```<path to>\FlyInside Flight Simulator\Data\Scripts```
+- Create a ~/Documents/SimConnect.cfg text file with the following:
+    [SimConnect]
+    Protocol=IPv4
+    Address=127.0.0.1
+    Port=10000
 - Start the sim
 - Run ```python ffs_fsforce.py```
