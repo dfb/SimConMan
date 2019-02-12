@@ -25,9 +25,11 @@ Currently requires Python 3.6 or so. This is still very much a work in progress 
     (Note that you may need to run this from an administrative command prompt. Also, it makes copies of the files it modifies)
 - Put Startup_FSForce.chai in ```<path to>\FlyInside Flight Simulator\Data\Scripts```
 - Create a ~/Documents/SimConnect.cfg text file with the following:
+```
     [SimConnect]
     Protocol=IPv4
     Address=127.0.0.1
     Port=10000
+ ```
 - Start the sim
 - Run ```python ffs_fsforce.py```
