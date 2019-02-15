@@ -47,7 +47,10 @@ class Bag(dict):
         return json.dumps(self)
 
 def log(*args):
-    print(' '.join(str(x) for x in args))
+    try:
+        print(*args)
+    except UnicodeEncodeError:
+        print(repr(args))
 
 def logTB():
     for line in traceback.format_exc().split('\n'):
