@@ -3,7 +3,8 @@ Replays recordings saved from the proxy server - simulating the server side of t
 SimConnect proxy server
 '''
 
-import sys, socket, time, traceback, threading, pickle
+from simconnect.utils import *
+import sys, socket, time, threading, pickle
 from simconnect import connection, message
 
 class GV:
@@ -31,7 +32,7 @@ class ConnectionHandler:
         if self.serverPort is not None:
             serverSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             serverSock.connect(('127.0.0.1', self.serverPort))
-            print('connected to server at', self.serverPort)
+            log('connected to server at', self.serverPort)
             server = connection.ServerConnection(serverSock)
 
         ourStartTime = time.time()
@@ -46,13 +47,13 @@ class ConnectionHandler:
                 if self.serverPort is not None:
                     inMsg = server.Recv()
                     if inMsg is not None:
-                        print('[%d]' % self.handlerID, '(from server)', inMsg)
+                        log('[%d]' % self.handlerID, '(from server)', inMsg)
                         didWork = True
 
                 # Grab any messages from the client that are waiting
                 inMsg = self.client.Recv()
                 if inMsg is not None:
-                    print('[%d]' % self.handlerID, '(from client)', inMsg)
+                    log('[%d]' % self.handlerID, '(from client)', inMsg)
                     didWork = True
 
                 # Process all queued messages
@@ -65,7 +66,7 @@ class ConnectionHandler:
                     if time.time() >= playTime:
                         self.msgs.pop(0)
                         didWork = True
-                        print('[%d,%d]' % (self.handlerID, relTime), '(from recording)', msg)
+                        log('[%d,%d]' % (self.handlerID, relTime), '(from recording)', msg)
                         if msg.__class__.__name__[0] == 'C':
                             # send the msg from the recording to the server
                             if self.serverPort is not None:
@@ -79,7 +80,7 @@ class ConnectionHandler:
                 if not didWork:
                     time.sleep(0.05)
         except connection.Closed as e:
-            print('Connection closed', e)
+            log('Connection closed', e)
 
 def ListenForConnections(clientPort, serverPort, msgLists):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -87,11 +88,11 @@ def ListenForConnections(clientPort, serverPort, msgLists):
     server.bind(('', clientPort))
     server.listen(10)
     server.setblocking(0)
-    print('Listening on port', clientPort)
+    log('Listening on port', clientPort)
     while 1:
         try:
             q,v = server.accept()
-            print('Accepting connection')
+            log('Accepting connection')
             ConnectionHandler.Create(q, serverPort, msgLists.pop(0))
         except BlockingIOError:
             try:
@@ -101,8 +102,8 @@ def ListenForConnections(clientPort, serverPort, msgLists):
         except KeyboardInterrupt:
             break
         except:
-            traceback.print_exc()
-    print('Shutting down')
+            logTB()
+    log('Shutting down')
     GV.keepRunning = False
     server.close()
 

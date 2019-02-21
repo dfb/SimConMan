@@ -2,7 +2,8 @@
 SimConnect proxy server
 '''
 
-import sys, socket, time, traceback, threading, pickle
+from simconnect.utils import *
+import sys, socket, time, threading, pickle
 from simconnect import connection
 
 class GV:
@@ -31,7 +32,7 @@ class ConnectionHandler:
         startTime = time.time()
         serverSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         serverSock.connect((self.serverIP, self.serverPort))
-        print('connected to server at', self.serverIP, self.serverPort)
+        log('connected to server at', self.serverIP, self.serverPort)
         server = connection.ServerConnection(serverSock)
         if self.record:
             outF = open('proxyconn-%d.log' % self.handlerID, 'wb')
@@ -44,7 +45,7 @@ class ConnectionHandler:
                 toServer = self.client.Recv()
                 if toServer is not None:
                     didWork = True
-                    print('[%s, %d]' % (self.handlerID, relTime), toServer)
+                    log('[%s, %d]' % (self.handlerID, relTime), toServer)
                     if self.record:
                         pickle.dump((time.time(), self.handlerID, toServer), outF)
                     server.Send(toServer)
@@ -53,7 +54,7 @@ class ConnectionHandler:
                 toClient = server.Recv()
                 if toClient is not None:
                     didWork = True
-                    print('[%s, %d]' % (self.handlerID, relTime), toClient)
+                    log('[%s, %d]' % (self.handlerID, relTime), toClient)
                     if self.record:
                         pickle.dump((time.time(), self.handlerID, toClient), outF)
                     self.client.Send(toClient)
@@ -62,7 +63,7 @@ class ConnectionHandler:
                 if not didWork:
                     time.sleep(0.05)
         except connection.Closed as e:
-            print('Connection closed', e)
+            log('Connection closed', e)
 
         if self.record:
             outF.close()
@@ -73,11 +74,11 @@ def Proxy(srcPort, destIP, destPort, record):
     server.bind(('', srcPort))
     server.listen(10)
     server.setblocking(0)
-    print('Listening on port', srcPort)
+    log('Listening on port', srcPort)
     while 1:
         try:
             q,v = server.accept()
-            print('Accepting connection')
+            log('Accepting connection')
             ConnectionHandler.Create(q, destIP, destPort, record)
         except BlockingIOError:
             try:
@@ -87,8 +88,8 @@ def Proxy(srcPort, destIP, destPort, record):
         except KeyboardInterrupt:
             break
         except:
-            traceback.print_exc()
-    print('Shutting down')
+            logTB()
+    log('Shutting down')
     GV.keepRunning = False
     server.close()
 

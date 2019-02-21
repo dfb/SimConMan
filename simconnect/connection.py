@@ -6,6 +6,9 @@ TODO: instead of constantly hammering the socket, use select() to determine if i
 time to do a read or write.
 '''
 
+from . utils import *
+log, logTB = Logger()
+
 from . import message
 
 class Closed(Exception): pass
@@ -68,9 +71,9 @@ class Connection:
             raw = self.inBytes[:numConsumed]
             enc = message.MessageToBytes(msg)
             if raw != enc:
-                print('MSG:', msg)
-                print('RAW:', raw)
-                print('ENC:', enc)
+                log('MSG:', msg)
+                log('RAW:', raw)
+                log('ENC:', enc)
                 assert 0, 'ENCODING FAILURE'
             self.inBytes = self.inBytes[numConsumed:]
 

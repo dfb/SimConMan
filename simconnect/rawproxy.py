@@ -2,7 +2,8 @@
 SimConnect proxy server
 '''
 
-import sys, socket, time, traceback, threading
+from . utils import *
+import sys, socket, time, threading
 import connection
 
 class GV:
@@ -30,7 +31,7 @@ class ConnectionHandler:
         serverSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         serverSock.connect((self.serverIP, self.serverPort))
         serverSock.setblocking(0)
-        print('connected to server at', self.serverIP, self.serverPort)
+        log('connected to server at', self.serverIP, self.serverPort)
         clientSock = self.client
         clientSock.setblocking(0)
         toServer = []
@@ -84,9 +85,9 @@ class ConnectionHandler:
                 if sent == 0 and recv == 0:
                     time.sleep(0.05)
                 else:
-                    print('sent:', sent, 'recv:', recv)
+                    log('sent:', sent, 'recv:', recv)
         except connection.Closed as e:
-            print('Connection closed', e)
+            log('Connection closed', e)
 
 def Proxy(srcPort, destIP, destPort):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -94,11 +95,11 @@ def Proxy(srcPort, destIP, destPort):
     server.bind(('', srcPort))
     server.listen(10)
     server.setblocking(0)
-    print('Listening on port', srcPort)
+    log('Listening on port', srcPort)
     while 1:
         try:
             q,v = server.accept()
-            print('Accepting connection')
+            log('Accepting connection')
             ConnectionHandler.Create(q, destIP, destPort)
         except BlockingIOError:
             try:
@@ -108,8 +109,8 @@ def Proxy(srcPort, destIP, destPort):
         except KeyboardInterrupt:
             break
         except:
-            traceback.print_exc()
-    print('Shutting down')
+            logTB()
+    log('Shutting down')
     GV.keepRunning = False
     server.close()
 

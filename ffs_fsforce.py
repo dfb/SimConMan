@@ -22,7 +22,12 @@ NEXT
 - add ConnHandler.activeDataRequests
 '''
 
-import sys, socket, time, traceback, threading, json, struct
+from simconnect.utils import *
+InitLogging('ffs_fsforce.log')
+log, logTB = Logger()
+log('heeey')
+
+import sys, socket, time, threading, json, struct
 from simconnect import connection, message, defs as SC
 import fsfloader
 
@@ -45,16 +50,6 @@ class Bag(dict):
         if indent > 0:
             return json.dumps(self, indent=indent, sort_keys=True)
         return json.dumps(self)
-
-def log(*args):
-    try:
-        print(*args)
-    except UnicodeEncodeError:
-        print(repr(args))
-
-def logTB():
-    for line in traceback.format_exc().split('\n'):
-        log(line)
 
 class GV:
     keepRunning = True

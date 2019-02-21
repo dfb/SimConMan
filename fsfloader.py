@@ -1,3 +1,4 @@
+from simconnect.utils import *
 from ctypes import *
 from ctypes.wintypes import *
 import time, sys, subprocess, threading, configparser, os
@@ -12,7 +13,7 @@ class WNDCLASSEX(Structure):
 
 def WndProc(hWnd, msg, wParam, lParam):
     if msg not in (1, 36, 129, 131): # i.e. ones I've checked that we don't care about logging
-        print('WndProc', msg, wParam, lParam)
+        log('WndProc', msg, wParam, lParam)
     if msg == WM_DESTROY:
         windll.user32.PostQuitMessage(0)
     else:
@@ -46,7 +47,7 @@ class FSForceRunner:
             while self.running and time.time() < waitUntil:
                 time.sleep(0.1)
             if self.running:
-                print('WARNING: message thread is still running')
+                log('WARNING: message thread is still running')
 
     def _Thread(self):
         time.sleep(1)
@@ -78,19 +79,19 @@ class FSForceRunner:
             fsDLL = windll.LoadLibrary(os.path.join(self.fsfDir, 'FSForce%s_x64.dll' % ('-89' if patch else '')))
             if not fsDLL:
                 raise Exception('Failed to load FSForce_x64.dll')
-            print('Starting DLL', fsDLL.DLLStart())
+            log('Starting DLL', fsDLL.DLLStart())
 
             # Kill any prior versions of the FSForce executable, then relaunch
             exeName = 'FSForce%s.exe' % ('-89' if patch else '')
             for p in psutil.process_iter(attrs=['name']):
                 if p.info['name'] == exeName:
                     p.kill()
-                    print('killed one old instance')
+                    log('killed one old instance')
             fsEXE = subprocess.Popen([os.path.join(self.fsfDir, exeName), '/FS'])
 
             try:
                 # Pump messages til done
-                #print('Pumping messages')
+                #log('Pumping messages')
                 msg = MSG()
                 pMsg = pointer(msg)
                 while self.keepRunning:
@@ -100,13 +101,13 @@ class FSForceRunner:
                     else:
                         time.sleep(0.05)
             finally:
-                print('killing fsEXE')
+                log('killing fsEXE')
                 fsEXE.kill()
         finally:
             self.running = False
 
 if __name__ == '__main__':
-    print('sleeping') ; time.sleep(2) ; print('going')
+    log('sleeping') ; time.sleep(2) ; log('going')
     runner = FSForceRunner(True)
     runner.Start()
     try:

@@ -3,13 +3,9 @@ Connects to P3D as a SimConnect client and requests data/events so we can verify
 values in a data stream.
 '''
 
-import sys, socket, time, traceback, threading, struct
+from simconnect.utils import *
+import sys, socket, time, threading, struct
 from simconnect import connection, message as M, defs as SC
-
-def log(*args): print(' '.join(str(x) for x in args))
-def logTB():
-    for line in traceback.format_exc().split('\n'):
-        log(line)
 
 class GV:
     keepRunning = True
@@ -182,7 +178,7 @@ def RunClient(simPort):
             didWork = True
             handler = globals().get('On' + msg.__class__.__name__)
             if handler is None:
-                print('ERROR: no handler for', msg)
+                log('ERROR: no handler for', msg)
             else:
                 msgs = handler(msg)
                 if msgs:
